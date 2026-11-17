@@ -1,0 +1,18 @@
+flowchart TD
+    A["Reply consumed from<br/>nexussaga.step.replies"] --> B{"malformed?<br/>(no sagaId / commandId)"}
+    B -->|yes| X1["discard<br/>(saved DB read)"]
+    B -->|no| C{"provider.isProcessed<br/>(reply:sagaId:commandId)"}
+    C -->|yes| X2["DUPLICATE → drop<br/>no DB access"]
+    C -->|no| D{"cached snapshot says stale?<br/>terminal / other commandId /<br/>other step / wrong phase"}
+    D -->|yes| X3["STALE → mark processed, drop<br/>no DB access"]
+    D -->|no / cache miss| E["tryLock saga:{id}<br/>(wait ≤ lock-wait)"]
+    E -->|timeout| X4["LockAcquisitionException<br/>Kafka retries with back-off"]
+    E -->|locked| F{"re-check processed"}
+    F -->|yes| X2
+    F -->|no| G["BEGIN TX<br/>SELECT saga (DB read)"]
+    G --> H{"stale vs DB row?"}
+    H -->|yes| I["no writes<br/>refresh cache"]
+    H -->|no| J["apply transition<br/>UPDATE saga (@Version)<br/>INSERT outbox + audit"]
+    J --> K["COMMIT"]
+    K --> L["markProcessed + cache snapshot<br/>metrics + WebSocket events"]
+    I --> L

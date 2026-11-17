@@ -1,0 +1,12 @@
+flowchart LR
+    LB["Load Balancer"] --> N1 & N2 & N3
+    subgraph HZ["Hazelcast cluster (embedded, TCP/IP discovery)"]
+        N1["Node 1<br/>engine + HZ member"]
+        N2["Node 2<br/>engine + HZ member"]
+        N3["Node 3<br/>engine + HZ member"]
+        N1 <-->|"IMap partitions + backups<br/>locks · idempotency · snapshots"| N2
+        N2 <--> N3
+        N1 <--> N3
+    end
+    N1 & N2 & N3 -->|"consumer group<br/>nexussaga-orchestrator"| K{{"Kafka<br/>replies partitioned by sagaId"}}
+    N1 & N2 & N3 --> PG[("PostgreSQL<br/>SKIP LOCKED outbox · @Version")]

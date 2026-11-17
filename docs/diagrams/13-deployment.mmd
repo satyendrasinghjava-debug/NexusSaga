@@ -1,0 +1,14 @@
+flowchart TB
+    U["Browser / API clients"] -->|":8080"| E
+    U -->|":8081"| KUI
+    subgraph compose["docker compose (network: nexussaga_default)"]
+        E["nexussaga-engine<br/>eclipse-temurin:21-jre-alpine<br/>embedded Hazelcast :5701"]
+        PG[("postgres:16<br/>:5432 · volume postgres-data")]
+        KF{{"apache/kafka:3.9.0 KRaft<br/>INTERNAL kafka:29092<br/>EXTERNAL localhost:9092"}}
+        KUI["kafka-ui :8081"]
+        RS[("redis:7 (profile: redis)")]
+    end
+    E -->|JDBC + Flyway| PG
+    E -->|produce / consume| KF
+    KUI --> KF
+    E -.->|"mode=redis only"| RS

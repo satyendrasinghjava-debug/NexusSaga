@@ -1,0 +1,20 @@
+flowchart LR
+    G["genesis<br/>000…000"] --> E1
+    subgraph E1["entry seq 1"]
+        direction TB
+        a1["SAGA_STARTED · micros · masked detail"]
+        h1["hash1 = SHA-256(genesis ∥ canonical(entry1))"]
+    end
+    E1 --> E2
+    subgraph E2["entry seq 2"]
+        direction TB
+        a2["STEP_DISPATCHED"]
+        h2["hash2 = SHA-256(hash1 ∥ canonical(entry2))"]
+    end
+    E2 --> E3
+    subgraph E3["entry seq n"]
+        direction TB
+        a3["SAGA_FAILED"]
+        h3["hashN = rollingChecksum"]
+    end
+    E3 --> S["receipt signature =<br/>HMAC-SHA256(serverSecret,<br/>sagaId | hashN | generatedAt)"]

@@ -1,0 +1,149 @@
+# =============================================================================
+# © 2026 Satyendra Singh. All Rights Reserved.
+# PROJECT: NexusSaga - Enterprise Generic Saga Orchestration Engine
+# =============================================================================
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+
+spring:
+  application:
+    name: nexussaga-engine
+  threads:
+    virtual:
+      enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  autoconfigure:
+    # The Redisson starter and Spring Data Redis are on the classpath for the "redis" provider mode only.
+    # Their auto-configurations would connect to Redis eagerly, so NexusSaga builds its own RedissonClient
+    # (see RedisProviderConfiguration) only when nexussaga.provider.mode=redis.
+    exclude:
+      - org.redisson.spring.starter.RedissonAutoConfigurationV2
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisReactiveAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+      - org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+      - org.springframework.boot.autoconfigure.hazelcast.HazelcastAutoConfiguration
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/nexussaga}
+    username: ${DB_USER:nexussaga}
+    password: ${DB_PASSWORD:nexussaga}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:20}
+      minimum-idle: 5
+      connection-timeout: 5000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        linger.ms: 5
+        # Messages are keyed by sagaId, so the default murmur2 partitioner pins every saga to one partition.
+        partitioner.ignore.keys: false
+    consumer:
+      group-id: nexussaga-orchestrator
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        isolation.level: read_committed
+    listener:
+      ack-mode: record
+      concurrency: ${KAFKA_LISTENER_CONCURRENCY:3}
+
+nexussaga:
+  provider:
+    # hazelcast (default, embedded, zero external servers) | redis | memory
+    mode: ${NEXUSSAGA_PROVIDER_MODE:hazelcast}
+    idempotency-ttl: 24h
+    state-cache-ttl: 1h
+    lock-wait: 3s
+    # Lease after which a lock held by a crashed node is released automatically (hazelcast mode).
+    lock-lease: 30s
+    lock-stripes: 256
+  hazelcast:
+    cluster-name: ${HAZELCAST_CLUSTER_NAME:nexussaga-cluster}
+    port: ${HAZELCAST_PORT:5701}
+    # Comma separated member list for TCP/IP discovery, e.g. "nexussaga-1:5701,nexussaga-2:5701"
+    members: ${HAZELCAST_MEMBERS:127.0.0.1}
+  redis:
+    address: ${REDIS_ADDRESS:redis://localhost:6379}
+    password: ${REDIS_PASSWORD:}
+    connection-pool-size: 32
+  security:
+    # Shared HMAC secret used for the bootstrap tenant and for signing audit receipts.
+    hmac-secret: ${NEXUSSAGA_HMAC_SECRET:change-me-nexussaga-dev-hmac-secret-0123456789}
+    # Base64 encoded 256-bit AES key. Generate one with: openssl rand -base64 32
+    aes-key: ${NEXUSSAGA_AES_KEY:CP7IuxuOdRWm6MLPm+mLsTF6I411wKqBqsILufNOYlg=}
+    require-timestamp: true
+    max-clock-skew: 5m
+    bootstrap-tenant:
+      enabled: true
+      tenant-id: ${NEXUSSAGA_BOOTSTRAP_TENANT_ID:default-tenant}
+      name: Default Tenant
+      api-key: ${NEXUSSAGA_BOOTSTRAP_API_KEY:nxs_live_default_key_change_me}
+  reaper:
+    check-interval-ms: 5000
+    batch-size: 200
+  outbox:
+    poll-interval-ms: 250
+    batch-size: 100
+    max-attempts: 10
+    send-timeout: 10s
+  kafka:
+    reply-topic: nexussaga.step.replies
+    partitions: 6
+    replication-factor: 1
+  demo:
+    enabled: ${NEXUSSAGA_DEMO_ENABLED:true}
+    tenant-id: chaos-demo
+    # Probability that the mock worker re-delivers a reply (simulates Kafka at-least-once redelivery).
+    duplicate-reply-rate: 0.35
+    min-latency-ms: 250
+    max-latency-ms: 900
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+
+logging:
+  level:
+    com.nexussaga: INFO
+    com.hazelcast: WARN
+    org.apache.kafka: WARN

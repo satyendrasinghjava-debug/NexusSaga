@@ -1,0 +1,13 @@
+flowchart LR
+    E["NexusSaga<br/>Outbox Relay"] -->|"FORWARD · key=sagaId"| F1{{"demo.inventory.reserve"}}
+    E --> F2{{"demo.payment.charge"}}
+    E --> F3{{"demo.shipping.create"}}
+    E -->|"COMPENSATE · key=sagaId"| C1{{"demo.inventory.release"}}
+    E --> C2{{"demo.payment.refund"}}
+    E --> C3{{"demo.shipping.cancel"}}
+    F1 & C1 --> S1["Inventory"]
+    F2 & C2 --> S2["Payment"]
+    F3 & C3 --> S3["Shipping"]
+    S1 & S2 & S3 -->|"StepReply · key=sagaId"| R{{"nexussaga.step.replies"}}
+    R --> L["StepReplyListener"]
+    R -.->|"poison message"| D{{"nexussaga.step.replies.DLT"}}

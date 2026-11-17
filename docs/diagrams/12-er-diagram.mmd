@@ -1,0 +1,57 @@
+erDiagram
+    API_TENANTS ||--o{ SAGA_INSTANCES : owns
+    SAGA_DEFINITIONS ||--o{ SAGA_INSTANCES : "workflow_name + version"
+    SAGA_INSTANCES ||--o{ OUTBOX_EVENTS : "aggregate_id"
+    SAGA_INSTANCES ||--o{ SAGA_AUDIT_LOG : "saga_id"
+    SAGA_INSTANCES ||--o{ SAGA_DLQ : "saga_id"
+    API_TENANTS {
+        varchar tenant_id PK
+        varchar api_key UK
+        varchar hmac_secret_encrypted
+        boolean active
+    }
+    SAGA_DEFINITIONS {
+        bigserial id PK
+        varchar workflow_name
+        int version
+        jsonb steps
+    }
+    SAGA_INSTANCES {
+        varchar saga_id PK
+        varchar tenant_id
+        varchar correlation_id
+        int current_step_index
+        varchar status
+        int retry_count
+        varchar last_command_id
+        jsonb payload "PII encrypted"
+        timestamptz step_started_at
+        bigint version "optimistic lock"
+    }
+    OUTBOX_EVENTS {
+        bigserial id PK
+        varchar aggregate_id
+        varchar topic
+        varchar message_key
+        jsonb payload
+        varchar status
+        int attempts
+    }
+    SAGA_AUDIT_LOG {
+        bigserial id PK
+        varchar saga_id
+        int seq
+        varchar event_type
+        jsonb detail "masked"
+        timestamptz event_time "micros"
+        varchar prev_hash
+        varchar entry_hash
+    }
+    SAGA_DLQ {
+        bigserial id PK
+        varchar saga_id
+        int failed_step_index
+        varchar reason
+        varchar status
+        int replay_count
+    }

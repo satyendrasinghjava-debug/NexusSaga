@@ -1,0 +1,18 @@
+sequenceDiagram
+    autonumber
+    participant O as Orchestrator
+    participant DB as PostgreSQL
+    participant R as OutboxRelay (any node)
+    participant K as Kafka
+    O->>DB: BEGIN
+    O->>DB: UPDATE saga_instances (version+1)
+    O->>DB: INSERT outbox_events (PENDING)
+    O->>DB: INSERT saga_audit_log
+    O->>DB: COMMIT (all or nothing)
+    loop every 250 ms
+        R->>DB: BEGIN, SELECT * FROM outbox_events<br/>WHERE status='PENDING' ORDER BY id<br/>LIMIT 100 FOR UPDATE SKIP LOCKED
+        R->>K: send(topic, key=sagaId, payload) – async batch
+        K-->>R: acks=all
+        R->>DB: UPDATE status='PUBLISHED. then COMMIT
+    end
+    Note over R,K: crash between send and commit → redelivery,<br/>absorbed by idempotency (at-least-once, effectively-once)

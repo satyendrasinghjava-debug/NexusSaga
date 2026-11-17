@@ -1,0 +1,21 @@
+sequenceDiagram
+    autonumber
+    participant E as NexusSaga
+    participant K as Kafka
+    participant S as Participant
+    participant DB as PostgreSQL
+    participant Op as Operator
+    E->>K: COMPENSATE step i (attempt 1)
+    S-->>E: FAILURE (or timeout)
+    E->>K: COMPENSATE step i (attempt 2..maxRetries+1)
+    S-->>E: FAILURE
+    E->>DB: TX: COMPENSATION_FAILED_DLQ + saga_dlq row + audit SAGA_DEAD_LETTERED
+    Op->>E: GET /api/v1/dlq
+    alt Replay
+        Op->>E: POST /dlq/{sagaId}/replay
+        E->>DB: TX: reopen COMPENSATING at step i + outbox + audit DLQ_REPLAYED
+        E->>K: COMPENSATE step i → reverse traversal continues to step 0
+    else Force-complete
+        Op->>E: POST /dlq/{sagaId}/force-complete {note}
+        E->>DB: TX: FAILED + dlq FORCE_COMPLETED + audit DLQ_FORCE_COMPLETED
+    end

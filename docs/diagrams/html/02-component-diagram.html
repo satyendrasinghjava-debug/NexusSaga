@@ -1,0 +1,43 @@
+<html><head><link rel="stylesheet" href="_base.css"></head><body><div id="c" style="width:1080px">
+<div class="title">NexusSaga — Component &amp; Package View</div>
+<div class="sub">Package com.nexussaga · arrows point from caller layer to callee layer</div>
+<div class="layer"><h3>api · chaos (inbound adapters)</h3><div class="row">
+ <div class="box"><b>SagaController</b><span>/api/v1/workflows, /sagas, /dlq, /metrics</span></div>
+ <div class="box"><b>ChaosSimulatorController</b><span>/api/v1/chaos/** (public, rate-limited)</span></div>
+ <div class="box"><b>GlobalExceptionHandler</b><span>RFC 7807 ProblemDetail</span></div>
+ <div class="box s"><b>StepReplyListener</b><span>@KafkaListener nexussaga.step.replies</span></div>
+ <div class="box"><b>ChaosStepWorker</b><span>demo participant (inventory/payment/shipping)</span></div>
+</div></div>
+<div class="arrow">calls</div>
+<div class="layer"><h3>security (cross-cutting)</h3><div class="row">
+ <div class="box r"><b>HmacAndApiKeyAuthFilter</b><span>OncePerRequestFilter</span></div>
+ <div class="box r"><b>TenantService</b><span>API key → tenant (Caffeine 60 s) · bootstrap tenant</span></div>
+ <div class="box r"><b>HmacSigner</b><span>HMAC-SHA256, constant-time compare</span></div>
+ <div class="box r"><b>AesGcmPayloadEncryptor</b><span>AES-256-GCM field encryption, masking</span></div>
+ <div class="box r"><b>CachedBodyHttpServletRequest</b><span>re-readable body</span></div>
+</div></div>
+<div class="arrow">uses</div>
+<div class="layer"><h3>engine (core domain services)</h3><div class="row">
+ <div class="box" style="border-width:2.5px"><b>SagaOrchestrator</b><span>startSaga · handleReply · handleTimeout · getSaga</span></div>
+ <div class="box"><b>SagaDefinitionRegistry</b><span>register / latest / get(version)</span></div>
+ <div class="box"><b>SagaCommandDispatcher</b><span>StepCommand → outbox</span></div>
+ <div class="box o"><b>OutboxRelayScheduler</b><span>@Scheduled relay + purge</span></div>
+ <div class="box o"><b>ZombieSagaReaper</b><span>@Scheduled timeout watchdog</span></div>
+ <div class="box o"><b>DeadLetterQueueService</b><span>replay · force-complete · list</span></div>
+</div></div>
+<div class="arrow">uses</div>
+<div class="cols">
+ <div class="layer"><h3>provider (strategy)</h3><div class="box p" style="margin-bottom:8px"><b>DistributedLockAndIdempotencyProvider</b><span>tryLock · unlock · markProcessedIfAbsent · isProcessed · cache/get/evict SagaStateSnapshot</span></div>
+  <div class="row"><div class="box p"><b>Hazelcast…</b><span>IMap locks + maps</span></div><div class="box p"><b>Redis…</b><span>RLock + SET NX PX</span></div><div class="box p"><b>Caffeine…</b><span>striped locks</span></div></div></div>
+ <div class="layer"><h3>audit · realtime · metrics</h3><div class="row">
+  <div class="box g"><b>AuditTrailWriter</b><span>append chained entry</span></div>
+  <div class="box g"><b>AuditReceiptService</b><span>verify + sign receipt</span></div></div>
+  <div class="row" style="margin-top:8px"><div class="box s"><b>SagaEventPublisher</b><span>STOMP</span></div>
+  <div class="box s"><b>DbLoadMetricsInterceptor</b><span>counters + Hibernate StatementInspector</span></div>
+  <div class="box s"><b>MetricsService</b><span>snapshot + broadcast</span></div></div></div>
+ <div class="layer" style="flex:.9"><h3>domain · repository · messaging</h3>
+  <div class="box" style="margin-bottom:8px"><b>Entities</b><span>SagaInstance, SagaDefinitionEntity, OutboxEvent, SagaDlqEntry, SagaAuditLogEntry, ApiTenant</span></div>
+  <div class="box" style="margin-bottom:8px"><b>Models</b><span>SagaDefinition, SagaStepDefinition, SagaContext, SagaStatus</span></div>
+  <div class="box"><b>Messages</b><span>StepCommand, StepReply, CommandType, ReplyOutcome</span></div></div>
+</div>
+</div></body></html>

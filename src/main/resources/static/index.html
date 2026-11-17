@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<!--
+  =============================================================================
+  © 2026 Satyendra Singh. All Rights Reserved.
+  PROJECT: NexusSaga - Enterprise Generic Saga Orchestration Engine
+  =============================================================================
+-->
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NexusSaga · Live Orchestration Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.0.0/bundles/stomp.umd.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"IBM Plex Sans"', 'ui-sans-serif', 'system-ui'],
+                        mono: ['"IBM Plex Mono"', 'ui-monospace', 'monospace']
+                    }
+                }
+            }
+        };
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { background: radial-gradient(1200px 600px at 10% -10%, #1e1b4b 0%, transparent 60%), #0b0d14; }
+        .card { background: rgba(17, 20, 32, 0.85); border: 1px solid rgba(148, 163, 184, 0.12); }
+        .pulse-dot { animation: pulse 1.4s ease-in-out infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+        .row-enter { animation: rowIn .35s ease-out; }
+        @keyframes rowIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+        .bar { transition: width .6s cubic-bezier(.2, .8, .2, 1); }
+        .log-line { font-size: 11.5px; line-height: 1.45; }
+        ::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-thumb { background: #1f2937; border-radius: 8px; }
+    </style>
+</head>
+<body class="h-full text-slate-200 font-sans antialiased">
+<div class="max-w-[1440px] mx-auto px-5 py-6 space-y-6">
+
+    <!-- Header -->
+    <header class="flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 grid place-items-center font-bold text-white">N</div>
+            <div>
+                <h1 class="text-xl font-semibold tracking-tight text-white">NexusSaga <span class="text-slate-400 font-normal">· Live Orchestration</span></h1>
+                <p class="text-xs text-slate-400">Generic saga engine · transactional outbox · reverse compensation · zombie reaper</p>
+            </div>
+        </div>
+        <div class="flex items-center gap-3 text-xs">
+            <span class="px-2.5 py-1 rounded-full card font-mono">provider: <span id="providerMode" class="text-indigo-300">–</span></span>
+            <span id="connPill" class="px-2.5 py-1 rounded-full card flex items-center gap-2">
+                <span id="connDot" class="w-2 h-2 rounded-full bg-slate-500"></span><span id="connText">connecting…</span>
+            </span>
+            <a href="/swagger-ui.html" target="_blank" class="px-2.5 py-1 rounded-full card hover:border-indigo-400/50">API docs ↗</a>
+        </div>
+    </header>
+
+    <!-- Metric cards -->
+    <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div class="card rounded-2xl p-5">
+            <p class="text-xs uppercase tracking-wider text-slate-400">Total Events Processed</p>
+            <p id="mEvents" class="mt-2 text-3xl font-semibold font-mono text-white">0</p>
+            <p class="mt-1 text-xs text-slate-500">replies consumed from <span class="font-mono">nexussaga.step.replies</span></p>
+        </div>
+        <div class="card rounded-2xl p-5">
+            <p class="text-xs uppercase tracking-wider text-slate-400">DB Queries Saved <span class="normal-case">(In-Memory Shield)</span></p>
+            <p class="mt-2 text-3xl font-semibold font-mono text-emerald-300"><span id="mSavedPct">0.0</span>%</p>
+            <div class="mt-2 h-1.5 rounded-full bg-slate-800 overflow-hidden"><div id="mSavedBar" class="bar h-full bg-emerald-400" style="width:0%"></div></div>
+            <p class="mt-1 text-xs text-slate-500"><span id="mSaved">0</span> reads avoided · <span id="mDupes">0</span> duplicates · <span id="mSql">0</span> SQL total</p>
+        </div>
+        <div class="card rounded-2xl p-5">
+            <p class="text-xs uppercase tracking-wider text-slate-400">Active Sagas</p>
+            <p id="mActive" class="mt-2 text-3xl font-semibold font-mono text-sky-300">0</p>
+            <p class="mt-1 text-xs text-slate-500"><span id="mCompleted">0</span> completed · <span id="mFailed">0</span> rolled back · <span id="mDlq">0</span> DLQ</p>
+        </div>
+        <div class="card rounded-2xl p-5">
+            <p class="text-xs uppercase tracking-wider text-slate-400">Auto-Rollbacks Executed</p>
+            <p id="mRollbacks" class="mt-2 text-3xl font-semibold font-mono text-amber-300">0</p>
+            <p class="mt-1 text-xs text-slate-500"><span id="mTimeouts">0</span> triggered by the zombie reaper</p>
+        </div>
+    </section>
+
+    <div class="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-6">
+        <div class="space-y-6">
+            <!-- Chaos panel -->
+            <section class="card rounded-2xl p-5">
+                <div class="flex items-center justify-between flex-wrap gap-2">
+                    <h2 class="text-sm font-semibold text-white">🔥 Simulate Chaos</h2>
+                    <p class="text-xs text-slate-500">3-step workflow: reserve-inventory → charge-payment → ship-order</p>
+                </div>
+                <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <button data-scenario="happy-path" class="chaos-btn group rounded-xl border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 px-4 py-3 text-left transition">
+                        <span class="block text-sm font-semibold text-emerald-300">✅ Run Happy Path</span>
+                        <span class="block text-xs text-slate-400 mt-0.5">All steps succeed → COMPLETED</span>
+                    </button>
+                    <button data-scenario="step3-crash" class="chaos-btn group rounded-xl border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 px-4 py-3 text-left transition">
+                        <span class="block text-sm font-semibold text-amber-300">💥 Simulate Step-3 Crash → Auto-Rollback</span>
+                        <span class="block text-xs text-slate-400 mt-0.5">Retries exhausted → compensate 2, then 1</span>
+                    </button>
+                    <button data-scenario="zombie-hang" class="chaos-btn group rounded-xl border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 px-4 py-3 text-left transition">
+                        <span class="block text-sm font-semibold text-rose-300">🧟 Simulate Network Hang → Zombie Reaper</span>
+                        <span class="block text-xs text-slate-400 mt-0.5">Step 2 never replies → TIMED_OUT → rollback (~10-15 s)</span>
+                    </button>
+                </div>
+                <p id="chaosMsg" class="mt-3 text-xs text-slate-400 h-4"></p>
+            </section>
+
+            <!-- Feed -->
+            <section class="card rounded-2xl">
+                <div class="px-5 py-4 flex items-center justify-between border-b border-slate-800">
+                    <h2 class="text-sm font-semibold text-white">Live Saga Execution Feed</h2>
+                    <div class="flex items-center gap-3 text-[11px] text-slate-400">
+                        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-emerald-500"></span>Completed</span>
+                        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-sky-500"></span>Running</span>
+                        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-amber-500"></span>Compensating</span>
+                        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-rose-500"></span>Failed</span>
+                    </div>
+                </div>
+                <div id="feed" class="divide-y divide-slate-800/80 max-h-[620px] overflow-y-auto">
+                    <p id="feedEmpty" class="px-5 py-10 text-center text-sm text-slate-500">No sagas yet: press a chaos button to start one.</p>
+                </div>
+            </section>
+        </div>
+
+        <!-- Event log -->
+        <aside class="card rounded-2xl flex flex-col max-h-[860px]">
+            <div class="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
+                <h2 class="text-sm font-semibold text-white">Event Stream</h2>
+                <button id="clearLog" class="text-[11px] text-slate-400 hover:text-white">clear</button>
+            </div>
+            <div id="log" class="px-4 py-3 font-mono overflow-y-auto flex-1 space-y-1"></div>
+        </aside>
+    </div>
+
+    <footer class="text-center text-[11px] text-slate-600 pb-4">© 2026 Satyendra Singh · NexusSaga</footer>
+</div>
+
+<script>
+(() => {
+    'use strict';
+
+    const sagas = new Map();
+    const scenarios = new Map();
+    const feed = document.getElementById('feed');
+    const logEl = document.getElementById('log');
+
+    const STATUS_STYLE = {
+        STARTED: 'bg-slate-500/15 text-slate-300 border-slate-500/30',
+        IN_PROGRESS: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
+        COMPLETED: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+        COMPENSATING: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+        TIMED_OUT: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
+        FAILED: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
+        COMPENSATION_FAILED_DLQ: 'bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/30'
+    };
+    const STEP_STYLE = {
+        pending: 'bg-slate-800 text-slate-500 border-slate-700',
+        running: 'bg-sky-500/20 text-sky-200 border-sky-500/50',
+        completed: 'bg-emerald-500/20 text-emerald-200 border-emerald-500/50',
+        compensating: 'bg-amber-500/25 text-amber-100 border-amber-400/60',
+        compensated: 'bg-amber-500/10 text-amber-300 border-amber-500/40 border-dashed',
+        failed: 'bg-rose-500/25 text-rose-100 border-rose-500/60'
+    };
+    const STEP_ICON = { pending: '·', running: '⟳', completed: '✓', compensating: '↺', compensated: '↩', failed: '✕' };
+
+    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const fmt = (n) => Number(n || 0).toLocaleString();
+    const timeOf = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleTimeString([], {hour12: false}) + '.' + String(d.getMilliseconds()).padStart(3, '0'); };
+
+    function ensureSaga(id, steps, workflow) {
+        let s = sagas.get(id);
+        if (!s) {
+            s = { id, workflow, steps: steps || [], stepState: (steps || []).map(() => 'pending'), status: 'STARTED', message: '', updated: null, el: null };
+            sagas.set(id, s);
+        } else if (steps && steps.length && !s.steps.length) {
+            s.steps = steps; s.stepState = steps.map(() => 'pending');
+        }
+        return s;
+    }
+
+    function applyEvent(e) {
+        const s = ensureSaga(e.sagaId, e.steps, e.workflowName);
+        const i = e.stepIndex;
+        const set = (state) => { if (i >= 0 && i < s.stepState.length) s.stepState[i] = state; };
+        switch (e.eventType) {
+            case 'STEP_DISPATCHED':
+            case 'STEP_RETRY_DISPATCHED': set('running'); break;
+            case 'STEP_COMPLETED': set('completed'); break;
+            case 'STEP_FAILED':
+            case 'STEP_TIMED_OUT':
+            case 'COMPENSATION_STEP_FAILED':
+            case 'SAGA_DEAD_LETTERED': set('failed'); break;
+            case 'COMPENSATION_DISPATCHED':
+            case 'COMPENSATION_RETRY_DISPATCHED':
+            case 'DLQ_REPLAYED': set('compensating'); break;
+            case 'STEP_COMPENSATED': set('compensated'); break;
+        }
+        s.status = e.status;
+        s.message = e.message;
+        s.updated = e.timestamp;
+        render(s);
+        log(e);
+    }
+
+    function render(s) {
+        document.getElementById('feedEmpty')?.remove();
+        if (!s.el) {
+            s.el = document.createElement('div');
+            s.el.className = 'row-enter px-5 py-4 flex flex-col lg:flex-row lg:items-center gap-3';
+            feed.prepend(s.el);
+        }
+        const scenario = scenarios.get(s.id);
+        const steps = s.steps.map((name, idx) => {
+            const st = s.stepState[idx] || 'pending';
+            const pulse = st === 'running' || st === 'compensating' ? ' pulse-dot' : '';
+            return `<span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-mono ${STEP_STYLE[st]}">
+                        <span class="${pulse}">${STEP_ICON[st]}</span>${esc(idx + 1)}. ${esc(name)}</span>`;
+        }).join('<span class="text-slate-600">→</span>');
+        s.el.innerHTML = `
+            <div class="min-w-[220px]">
+                <div class="flex items-center gap-2">
+                    <span class="font-mono text-xs text-slate-300" title="${esc(s.id)}">${esc(s.id.substring(0, 8))}…</span>
+                    <span class="px-2 py-0.5 rounded-full border text-[10px] font-semibold tracking-wide ${STATUS_STYLE[s.status] || STATUS_STYLE.STARTED}">${esc(s.status)}</span>
+                </div>
+                <p class="text-[11px] text-slate-500 mt-1">${esc(scenario || 'saga')} · ${esc(timeOf(s.updated))}</p>
+            </div>
+            <div class="flex-1 flex flex-wrap items-center gap-1.5">${steps}</div>
+            <div class="flex items-center gap-3 lg:justify-end">
+                <span class="text-[11px] text-slate-400 max-w-[220px] truncate" title="${esc(s.message)}">${esc(s.message)}</span>
+                <a href="/api/v1/chaos/audit/${encodeURIComponent(s.id)}" download
+                   class="shrink-0 text-[11px] px-2.5 py-1.5 rounded-lg border border-indigo-500/40 bg-indigo-500/10 text-indigo-200 hover:bg-indigo-500/25">⬇ Download Audit Receipt</a>
+            </div>`;
+    }
+
+    function log(e) {
+        const color = e.eventType.includes('COMPENSAT') ? 'text-amber-300'
+            : (e.eventType.includes('FAIL') || e.eventType.includes('TIMED_OUT') || e.eventType.includes('DEAD')) ? 'text-rose-300'
+            : e.eventType.includes('COMPLETED') ? 'text-emerald-300' : 'text-sky-300';
+        const line = document.createElement('div');
+        line.className = 'log-line';
+        line.innerHTML = `<span class="text-slate-600">${esc(timeOf(e.timestamp))}</span> <span class="text-slate-500">${esc(e.sagaId.substring(0, 6))}</span> <span class="${color}">${esc(e.eventType)}</span> <span class="text-slate-400">${esc(e.stepName || '')}</span>`;
+        logEl.prepend(line);
+        while (logEl.childElementCount > 200) logEl.lastElementChild.remove();
+    }
+
+    function applyMetrics(m) {
+        document.getElementById('providerMode').textContent = m.providerMode;
+        document.getElementById('mEvents').textContent = fmt(m.totalEventsProcessed);
+        document.getElementById('mSavedPct').textContent = Number(m.dbSavingsPercent || 0).toFixed(1);
+        document.getElementById('mSavedBar').style.width = Math.min(100, m.dbSavingsPercent || 0) + '%';
+        document.getElementById('mSaved').textContent = fmt(m.dbQueriesSavedByCache);
+        document.getElementById('mDupes').textContent = fmt(m.duplicatesRejected);
+        document.getElementById('mSql').textContent = fmt(m.totalSqlStatements);
+        document.getElementById('mActive').textContent = fmt(m.activeSagas);
+        document.getElementById('mCompleted').textContent = fmt(m.sagasCompleted);
+        document.getElementById('mFailed').textContent = fmt(m.sagasFailed);
+        document.getElementById('mDlq').textContent = fmt(m.sagasDeadLettered);
+        document.getElementById('mRollbacks').textContent = fmt(m.autoRollbacksExecuted);
+        document.getElementById('mTimeouts').textContent = fmt(m.sagasTimedOut);
+    }
+
+    function stepStatesFromContext(c) {
+        const n = c.steps.length, i = c.currentStepIndex;
+        return c.steps.map((_, idx) => {
+            switch (c.status) {
+                case 'COMPLETED': return 'completed';
+                case 'IN_PROGRESS': return idx < i ? 'completed' : idx === i ? 'running' : 'pending';
+                case 'COMPENSATING': return idx < i ? 'completed' : idx === i ? 'compensating' : (idx < n ? 'compensated' : 'pending');
+                case 'FAILED': return idx === 0 || idx < i ? 'compensated' : 'pending';
+                case 'COMPENSATION_FAILED_DLQ': return idx === i ? 'failed' : idx < i ? 'completed' : 'compensated';
+                default: return 'pending';
+            }
+        });
+    }
+
+    async function loadInitial() {
+        try {
+            const [metrics, recent] = await Promise.all([
+                fetch('/api/v1/chaos/metrics').then(r => r.ok ? r.json() : null),
+                fetch('/api/v1/chaos/recent').then(r => r.ok ? r.json() : [])
+            ]);
+            if (metrics) applyMetrics(metrics);
+            recent.slice().reverse().forEach(c => {
+                const s = ensureSaga(c.sagaId, c.steps, c.workflowName);
+                s.stepState = stepStatesFromContext(c);
+                s.status = c.status;
+                s.message = c.failureReason || '';
+                s.updated = c.updatedAt;
+                if (c.payload && c.payload.chaosMode) scenarios.set(c.sagaId, c.payload.chaosMode);
+                render(s);
+            });
+        } catch (err) {
+            console.warn('Initial load failed', err);
+        }
+    }
+
+    function connect() {
+        const client = new StompJs.Client({
+            webSocketFactory: () => new SockJS('/ws'),
+            reconnectDelay: 3000,
+            heartbeatIncoming: 10000,
+            heartbeatOutgoing: 10000
+        });
+        const setConn = (ok, text) => {
+            document.getElementById('connDot').className = 'w-2 h-2 rounded-full ' + (ok ? 'bg-emerald-400 pulse-dot' : 'bg-rose-500');
+            document.getElementById('connText').textContent = text;
+        };
+        client.onConnect = () => {
+            setConn(true, 'live');
+            client.subscribe('/topic/sagas', msg => applyEvent(JSON.parse(msg.body)));
+            client.subscribe('/topic/metrics', msg => applyMetrics(JSON.parse(msg.body)));
+        };
+        client.onWebSocketClose = () => setConn(false, 'reconnecting…');
+        client.onStompError = () => setConn(false, 'broker error');
+        client.activate();
+    }
+
+    document.querySelectorAll('.chaos-btn').forEach(btn => btn.addEventListener('click', async () => {
+        const msg = document.getElementById('chaosMsg');
+        btn.disabled = true; btn.classList.add('opacity-60');
+        try {
+            const res = await fetch('/api/v1/chaos/' + btn.dataset.scenario, { method: 'POST' });
+            const body = await res.json();
+            if (!res.ok) throw new Error(body.error || body.detail || res.statusText);
+            scenarios.set(body.sagaId, body.scenario);
+            const s = sagas.get(body.sagaId);
+            if (s) render(s);
+            msg.textContent = `Started ${body.sagaId.substring(0, 8)}… (${body.scenario}): ${body.expectedOutcome}`;
+        } catch (err) {
+            msg.textContent = 'Could not start scenario: ' + err.message;
+        } finally {
+            setTimeout(() => { btn.disabled = false; btn.classList.remove('opacity-60'); }, 400);
+        }
+    }));
+    document.getElementById('clearLog').addEventListener('click', () => { logEl.innerHTML = ''; });
+
+    loadInitial().then(connect);
+})();
+</script>
+</body>
+</html>

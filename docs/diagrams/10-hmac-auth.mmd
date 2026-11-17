@@ -1,0 +1,25 @@
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant F as HmacAndApiKeyAuthFilter
+    participant T as TenantService (Caffeine 60 s)
+    participant P as Provider (replay cache)
+    participant API as Controller
+    C->>C: ts = now millis<br/>sig = hex(HMAC-SHA256(secret, ts + "." + body))
+    C->>F: X-API-KEY, X-Timestamp, X-Signature + body
+    F->>T: resolve(apiKey)
+    T-->>F: tenant + decrypted secret (AES-GCM at rest)
+    alt unknown key
+        F-->>C: 401 Missing or unknown X-API-KEY
+    end
+    F->>F: |now - ts| ≤ 5 min ?
+    F->>F: constant-time compare(expected, sig)
+    alt mismatch
+        F-->>C: 401 payload may have been tampered with
+    end
+    F->>P: markProcessedIfAbsent("sig:tenant:sig", 10 min)
+    alt already seen
+        F-->>C: 401 Replayed request rejected
+    end
+    F->>API: authenticated TenantPrincipal + cached body
+    API-->>C: 2xx

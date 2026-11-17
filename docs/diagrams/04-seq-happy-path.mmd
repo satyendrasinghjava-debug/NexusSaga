@@ -1,0 +1,31 @@
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant E as NexusSaga
+    participant DB as PostgreSQL
+    participant R as Outbox Relay
+    participant K as Kafka
+    participant S1 as Inventory
+    participant S2 as Payment
+    participant S3 as Shipping
+    C->>E: POST /sagas/order/start (signed)
+    E->>DB: TX: saga IN_PROGRESS + outbox(step1) + audit
+    E-->>C: 202 Accepted {sagaId}
+    R->>DB: SELECT ... FOR UPDATE SKIP LOCKED
+    R->>K: demo.inventory.reserve (key=sagaId)
+    K->>S1: FORWARD command
+    S1->>K: reply SUCCESS → nexussaga.step.replies
+    K->>E: reply
+    E->>E: idempotency + stale check (in-memory)
+    E->>DB: TX: step=1 + outbox(step2) + audit
+    R->>K: demo.payment.charge
+    K->>S2: FORWARD
+    S2->>K: SUCCESS
+    K->>E: reply
+    E->>DB: TX: step=2 + outbox(step3) + audit
+    R->>K: demo.shipping.create
+    K->>S3: FORWARD
+    S3->>K: SUCCESS
+    K->>E: reply
+    E->>DB: TX: COMPLETED + audit SAGA_COMPLETED
+    E-->>C: (WebSocket) SAGA_COMPLETED

@@ -1,0 +1,24 @@
+sequenceDiagram
+    autonumber
+    participant E as NexusSaga
+    participant Z as ZombieSagaReaper
+    participant P as Provider (lock)
+    participant DB as PostgreSQL
+    participant K as Kafka
+    participant S2 as Payment (hung)
+    E->>K: payment.charge
+    K->>S2: FORWARD
+    Note over S2: no reply (network hang / crash)
+    loop every 5 s (check-interval-ms)
+        Z->>P: tryLock("zombie-reaper") – one leader per cluster
+        Z->>DB: ids WHERE status IN (IN_PROGRESS, COMPENSATING)<br/>AND step_started_at < now - 1s
+        Z->>E: handleTimeout(sagaId)
+        E->>P: lock saga:{id}
+        E->>DB: re-read, stepStartedAt + timeoutSeconds < now ?
+    end
+    Note over E: TIMED_OUT recorded in audit
+    E->>DB: TX: COMPENSATING at hung step + outbox + audit
+    E->>K: payment.refund (compensate hung step itself)
+    E->>K: inventory.release
+    Note over E: FAILED (rolled back)
+    S2--xE: late reply arrives → stale, ignored (commandId mismatch)

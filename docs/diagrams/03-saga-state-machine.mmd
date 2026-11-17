@@ -1,0 +1,22 @@
+flowchart TD
+    S((start)) -->|"POST /start"| ST["STARTED"]
+    ST -->|"dispatch step 0"| IP["IN_PROGRESS"]
+    IP -->|"(a)"| IP
+    IP -->|"(b) last step OK"| CO["COMPLETED"]
+    IP -->|"(c) step 0 failed"| FA["FAILED"]
+    IP -->|"(d) step i failed<br/>after maxRetries"| CP["COMPENSATING"]
+    IP -->|"(e) zombie reaper"| TO["TIMED_OUT"]
+    TO -->|"(f) undo hung step"| CP
+    CP -->|"(g)"| CP
+    CP -->|"(h) step 0 undone"| FA
+    CP -->|"(i) undo failed"| DLQ["COMPENSATION_<br/>FAILED_DLQ"]
+    DLQ -.->|"(j) DLQ replay"| CP
+    DLQ -->|"(k) force-complete"| FA
+    classDef ok fill:#ECFDF5,stroke:#059669,color:#064E3B
+    classDef run fill:#EFF6FF,stroke:#2563EB,color:#1E3A8A
+    classDef comp fill:#FFFBEB,stroke:#D97706,color:#78350F
+    classDef bad fill:#FFF1F2,stroke:#E11D48,color:#881337
+    class CO ok
+    class ST,IP run
+    class CP,TO comp
+    class FA,DLQ bad

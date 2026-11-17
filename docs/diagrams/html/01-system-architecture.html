@@ -1,0 +1,54 @@
+<html><head><link rel="stylesheet" href="_base.css"></head><body><div id="c" style="width:1080px">
+<div class="title">NexusSaga — System Architecture</div>
+<div class="sub">Layered view · numbers show the life of one saga step</div>
+<div class="layer"><h3>Clients</h3><div class="row">
+ <div class="box"><b><span class="num">1</span>Business services (any domain)</b><span>Order, loan, booking… call the REST API with X-API-KEY + X-Timestamp + X-Signature</span></div>
+ <div class="box"><b>Live dashboard (browser)</b><span>Tailwind + SockJS/STOMP, subscribes to /topic/sagas and /topic/metrics</span></div>
+ <div class="box"><b>Operators / SRE</b><span>Swagger UI, DLQ replay, audit receipts, Prometheus /actuator/prometheus</span></div>
+</div></div>
+<div class="arrow">HTTPS / WebSocket</div>
+<div class="layer"><h3>NexusSaga engine · Spring Boot 3.4 · Java 21 virtual threads</h3>
+ <div class="row" style="margin-bottom:10px">
+  <div class="box r"><b><span class="num">2</span>HmacAndApiKeyAuthFilter</b><span>tenant lookup · HMAC-SHA256 · ±5 min skew · replay guard</span></div>
+  <div class="box"><b>SagaController · ChaosSimulatorController</b><span>workflows, sagas, DLQ, audit, metrics, demo scenarios</span></div>
+  <div class="box s"><b>STOMP WebSocket /ws</b><span>live saga events · 1 s metrics broadcast</span></div>
+ </div>
+ <div class="row" style="margin-bottom:10px">
+  <div class="box" style="flex:1.4;border-width:2.5px"><b><span class="num">3</span>SagaOrchestrator — generic state machine</b><span>forward execution · retries · reverse compensation · one DB transaction per genuine transition (state + outbox + audit)</span></div>
+  <div class="box"><b>SagaDefinitionRegistry</b><span>versioned workflows, Caffeine cache, auto-creates topics</span></div>
+  <div class="box"><b>SagaCommandDispatcher</b><span>builds StepCommand, writes outbox row</span></div>
+ </div>
+ <div class="row">
+  <div class="box p"><b>Lock + Idempotency Provider</b><span>hazelcast (embedded IMap) · redis (Redisson) · memory (Caffeine) — selected by nexussaga.provider.mode</span></div>
+  <div class="box o"><b><span class="num">4</span>OutboxRelayScheduler</b><span>every 250 ms · FOR UPDATE SKIP LOCKED · key = sagaId</span></div>
+  <div class="box o"><b>ZombieSagaReaper</b><span>every 5 s · cluster leader lock · TIMED_OUT → compensation</span></div>
+  <div class="box o"><b>DeadLetterQueueService</b><span>replay / force-complete</span></div>
+  <div class="box g"><b>AuditTrailWriter · AuditReceiptService</b><span>SHA-256 hash chain, HMAC-signed receipts</span></div>
+ </div>
+</div>
+<div class="arrow">JDBC (HikariCP) · Kafka producer/consumer</div>
+<div class="cols">
+ <div class="layer"><h3>PostgreSQL 16 · Flyway V1</h3><div class="row">
+  <div class="box g"><b>saga_instances</b><span>@Version, encrypted payload</span></div>
+  <div class="box g"><b>outbox_events</b><span>PENDING → PUBLISHED</span></div>
+  <div class="box g"><b>saga_audit_log</b><span>hash chain</span></div>
+ </div><div class="row" style="margin-top:10px">
+  <div class="box g"><b>saga_definitions</b><span>versioned JSONB steps</span></div>
+  <div class="box g"><b>saga_dlq</b><span>failed compensations</span></div>
+  <div class="box g"><b>api_tenants</b><span>AES-encrypted secrets</span></div>
+ </div></div>
+ <div class="layer"><h3>Apache Kafka · KRaft</h3><div class="row">
+  <div class="box s"><b><span class="num">5</span>step forward topics</b><span>e.g. demo.payment.charge</span></div>
+  <div class="box s"><b>step compensation topics</b><span>e.g. demo.payment.refund</span></div>
+ </div><div class="row" style="margin-top:10px">
+  <div class="box s"><b><span class="num">7</span>nexussaga.step.replies</b><span>unified reply topic, key = sagaId</span></div>
+  <div class="box s"><b>…replies.DLT</b><span>poison messages</span></div>
+ </div></div>
+ <div class="layer" style="flex:.8"><h3>Participant services</h3>
+  <div class="box" style="margin-bottom:8px"><b><span class="num">6</span>Inventory</b><span>reserve / release</span></div>
+  <div class="box" style="margin-bottom:8px"><b>Payment</b><span>charge / refund</span></div>
+  <div class="box"><b>Shipping</b><span>create / cancel</span></div>
+ </div>
+</div>
+<div class="legend"><b>Flow:</b> (1) client starts a saga → (2) request authenticated → (3) orchestrator commits state + outbox command + audit in one transaction → (4) relay publishes the command → (5) Kafka routes it to (6) the participant → (7) the reply returns on the unified topic → orchestrator checks the in-memory shield (duplicate / stale) before touching PostgreSQL, then applies the next transition.</div>
+</div></body></html>

@@ -1,0 +1,23 @@
+sequenceDiagram
+    autonumber
+    participant E as NexusSaga
+    participant K as Kafka
+    participant S1 as Inventory
+    participant S2 as Payment
+    participant S3 as Shipping
+    Note over E,S3: Steps 1 and 2 already COMPLETED
+    E->>K: shipping.create (attempt 1)
+    K->>S3: FORWARD
+    S3-->>E: FAILURE (HTTP 503)
+    E->>K: shipping.create (attempt 2, retry)
+    S3-->>E: FAILURE
+    E->>K: shipping.create (attempt 3, retry)
+    S3-->>E: FAILURE
+    Note over E: maxRetries exhausted → COMPENSATING<br/>reverse traversal starts at step index 1
+    E->>K: payment.refund (COMPENSATE step 2)
+    K->>S2: COMPENSATE
+    S2-->>E: SUCCESS
+    E->>K: inventory.release (COMPENSATE step 1)
+    K->>S1: COMPENSATE
+    S1-->>E: SUCCESS
+    Note over E: step 0 compensated → FAILED (fully rolled back)<br/>step 3 is never compensated (it never succeeded)
